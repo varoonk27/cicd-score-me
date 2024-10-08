@@ -1,0 +1,67 @@
+pipeline {
+    agent {
+        docker {
+            image 'abhishekf5/maven-abhishek-docker-agent:v1'
+            args '--user root -v /var/run/docker.sock:/var/run/docker.sock' // mount Docker socket to access the host's Docker daemon
+        }
+    }
+
+    environment {
+        SONARQUBE_SERVER = 'SonarQube' // Set your SonarQube server name
+        SONAR_URL = 'http://192.168.0.121:9000'
+        GIT_REPO = 'https://github.com/sujayt-ghub/Jenkins-Zero-To-Hero.git' // Your Git repository URL
+        GIT_BRANCH = 'main' // Branch to build from
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                git branch: "${GIT_BRANCH}", url: "${GIT_REPO}"
+                sh 'echo passed'
+            }
+        }
+        stage('Build and Test') {
+            steps {
+                sh 'ls -ltr'
+                // Build the project and create a JAR file
+                sh 'cd java-maven-sonar-argocd-helm-k8s/spring-boot-app && mvn clean package'
+            }
+        }
+        stage('SonarQube Analysis') {
+            steps {
+                withCredentials([string(credentialsId: 'sonarqube', variable: 'SONAR_AUTH_TOKEN')]) {
+                    sh 'cd java-maven-sonar-argocd-helm-k8s/spring-boot-app && mvn sonar:sonar -Dsonar.login=$SONAR_AUTH_TOKEN -Dsonar.host.url=${SONAR_URL}'
+                }
+            }
+        }
+        stage('Code Coverage') {
+            steps {
+                jacoco execPattern: '**/target/*.exec', classPattern: '**/target/classes', sourcePattern: '**/src/main/java'
+            }
+        }
+        stage('Cyclomatic Complexity') {
+            steps {
+                sh 'lizard java-maven-sonar-argocd-helm-k8s/spring-boot-app'
+            }
+        }
+        stage('Security Scan') {
+            steps {
+                sh 'dependency-check --project my-app --out . --scan java-maven-sonar-argocd-helm-k8s/spring-boot-app'
+            }
+        }
+    }
+
+    post {
+        always {
+            archiveArtifacts artifacts: '**/target/*.jar', allowEmptyArchive: true
+            junit '**/target/surefire-reports/*.xml'
+            publishHTML([allowMissing: false, alwaysLinkToLastBuild: false, keepAll: true, reportDir: '.', reportFiles: 'index.html', reportName: 'Security Report'])
+        }
+        success {
+            mail to: 'you@example.com', subject: 'Build Successful', body: 'The build was successful.'
+        }
+        failure {
+            mail to: 'you@example.com', subject: 'Build Failed', body: 'The build failed.'
+        }
+    }
+}
